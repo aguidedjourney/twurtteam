@@ -5,6 +5,5 @@ pages_build_output_dir = "public"
 [[d1_databases]]
 binding = "DB"
 database_name = "twurtteam"
-# Replace with the id printed by: npx wrangler d1 create twurtteam
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "0218ca29-1bb1-48f4-b3b2-4bd3c0dd61ae"
 migrations_dir = "migrations"
