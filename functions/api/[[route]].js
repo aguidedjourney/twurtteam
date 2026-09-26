@@ -1,0 +1,105 @@
+// Single entry point for /api/*. Each route declares which "area" it belongs
+// to; see src/permissions.js for which roles can use which areas.
+
+import { HttpError, json } from '../../src/http.js';
+import { can } from '../../src/permissions.js';
+import * as auth from '../../src/auth.js';
+import * as users from '../../src/routes/users.js';
+import * as tx from '../../src/routes/transactions.js';
+import * as shows from '../../src/routes/shows.js';
+import * as merch from '../../src/routes/merch.js';
+import * as goals from '../../src/routes/goals.js';
+import { summary } from '../../src/routes/summary.js';
+
+const PUBLIC = null; // no login required
+const ANY = 'any'; // any signed-in user
+
+const routes = [
+  ['GET', '/api/auth/status', PUBLIC, auth.status],
+  ['POST', '/api/auth/setup', PUBLIC, auth.setup],
+  ['POST', '/api/auth/login', PUBLIC, auth.login],
+  ['POST', '/api/auth/logout', PUBLIC, auth.logout],
+  ['POST', '/api/auth/password', ANY, auth.changePassword],
+
+  ['GET', '/api/summary', 'finance', summary],
+
+  ['GET', '/api/transactions', 'finance', tx.list],
+  ['GET', '/api/transactions/export', 'finance', tx.exportCsv],
+  ['POST', '/api/transactions', 'finance', tx.create],
+  ['PUT', '/api/transactions/:id', 'finance', tx.update],
+  ['DELETE', '/api/transactions/:id', 'finance', tx.remove],
+
+  ['GET', '/api/shows', 'shows', shows.list],
+  ['GET', '/api/shows/:id', 'shows', shows.get],
+  ['POST', '/api/shows', 'shows', shows.create],
+  ['PUT', '/api/shows/:id', 'shows', shows.update],
+  ['DELETE', '/api/shows/:id', 'shows', shows.remove],
+
+  ['GET', '/api/merch', 'merch', merch.list],
+  ['POST', '/api/merch', 'merch', merch.create],
+  ['PUT', '/api/merch/:id', 'merch', merch.update],
+  ['DELETE', '/api/merch/:id', 'merch', merch.remove],
+  ['GET', '/api/merch/:id/movements', 'merch', merch.movements],
+  ['POST', '/api/merch/:id/adjust', 'merch', merch.adjust],
+
+  ['GET', '/api/goals', 'goals', goals.list],
+  ['POST', '/api/goals', 'goals', goals.create],
+  ['PUT', '/api/goals/:id', 'goals', goals.update],
+  ['DELETE', '/api/goals/:id', 'goals', goals.remove],
+  ['POST', '/api/goals/:id/milestones', 'goals', goals.addMilestone],
+  ['PUT', '/api/milestones/:id', 'goals', goals.updateMilestone],
+  ['DELETE', '/api/milestones/:id', 'goals', goals.removeMilestone],
+
+  ['GET', '/api/users', 'users', users.list],
+  ['POST', '/api/users', 'users', users.create],
+  ['PUT', '/api/users/:id', 'users', users.update],
+];
+
+function match(pattern, path) {
+  const a = pattern.split('/');
+  const b = path.replace(/\/+$/, '').split('/');
+  if (a.length !== b.length) return null;
+  const params = {};
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].startsWith(':')) params[a[i].slice(1)] = decodeURIComponent(b[i]);
+    else if (a[i] !== b[i]) return null;
+  }
+  return params;
+}
+
+export async function onRequest({ request, env }) {
+  const url = new URL(request.url);
+  try {
+    if (!env.DB) throw new HttpError(500, 'Database is not connected (missing DB binding)');
+
+    // Block cross-site form posts: state-changing requests must come from this site.
+    if (request.method !== 'GET') {
+      const origin = request.headers.get('origin');
+      if (origin && origin !== url.origin) throw new HttpError(403, 'Cross-site request blocked');
+    }
+
+    let found = null;
+    let methodMismatch = false;
+    for (const [method, pattern, area, handler] of routes) {
+      const params = match(pattern, url.pathname);
+      if (!params) continue;
+      if (method !== request.method) { methodMismatch = true; continue; }
+      found = { area, handler, params };
+      break;
+    }
+    if (!found) throw new HttpError(methodMismatch ? 405 : 404, methodMismatch ? 'Method not allowed' : 'Not found');
+
+    let user = null;
+    if (found.area !== PUBLIC) {
+      user = await auth.currentUser(env, request);
+      if (!user) throw new HttpError(401, 'Please sign in');
+      if (found.area !== ANY && !can(user, found.area)) throw new HttpError(403, "You don't have access to this");
+    }
+    return await found.handler({ request, env, url, params: found.params, user });
+  } catch (err) {
+    if (err instanceof HttpError) return json({ error: err.message }, err.status);
+    if (String(err?.message).includes('UNIQUE constraint failed')) return json({ error: 'That already exists' }, 409);
+    console.error(err);
+    return json({ error: 'Something went wrong on the server' }, 500);
+  }
+}

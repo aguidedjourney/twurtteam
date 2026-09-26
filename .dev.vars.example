@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local development. In Cloudflare, set SETUP_KEY as an
+# encrypted environment variable (Settings -> Variables and secrets).
+SETUP_KEY=change-me-to-a-long-random-string

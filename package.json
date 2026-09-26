@@ -1,0 +1,14 @@
+{
+  "name": "twurtteam",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:migrate:local": "wrangler d1 migrations apply twurtteam --local",
+    "db:migrate:remote": "wrangler d1 migrations apply twurtteam --remote",
+    "dev": "wrangler pages dev",
+    "deploy": "wrangler pages deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.41.0"
+  }
+}
