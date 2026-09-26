@@ -42,15 +42,35 @@ export async function create({ env, request, user }) {
   return json({ id }, 201);
 }
 
+// Statement that sets cost and/or price on an item, or on every size of it
+// (all items sharing its name) when allSizes is true.
+function pricingStmt(env, item, { cost, price, allSizes }) {
+  const sets = [];
+  const args = [];
+  if (cost != null) { sets.push('unit_cost_cents = ?'); args.push(cost); }
+  if (price != null) { sets.push('price_cents = ?'); args.push(price); }
+  if (!sets.length) return null;
+  const where = allSizes ? 'name = ? COLLATE NOCASE' : 'id = ?';
+  return env.DB.prepare(`UPDATE merch_items SET ${sets.join(', ')} WHERE ${where}`).bind(...args, allSizes ? item.name : item.id);
+}
+
 // Quantity is only changed through stock adjustments so history stays accurate.
 export async function update({ env, request, params }) {
   const id = v.id(params.id, 'Item');
-  const m = clean(await readBody(request));
-  const res = await env.DB.prepare(
+  const item = await env.DB.prepare('SELECT * FROM merch_items WHERE id = ?').bind(id).first();
+  if (!item) throw new HttpError(404, 'Item not found');
+  const body = await readBody(request);
+  const m = clean(body);
+  const stmts = [];
+  // Apply to the other sizes first (matched by the old name), then save this row, which may rename it.
+  if (v.bool(body.apply_to_all_sizes)) {
+    stmts.push(pricingStmt(env, item, { cost: m.unit_cost_cents, price: m.price_cents, allSizes: true }));
+  }
+  stmts.push(env.DB.prepare(
     `UPDATE merch_items SET name = ?, variant = ?, sku = ?, unit_cost_cents = ?, price_cents = ?, low_stock = ?, notes = ?, active = ?
      WHERE id = ?`
-  ).bind(m.name, m.variant, m.sku, m.unit_cost_cents, m.price_cents, m.low_stock, m.notes, m.active, id).run();
-  if (!res.meta.changes) throw new HttpError(404, 'Item not found');
+  ).bind(m.name, m.variant, m.sku, m.unit_cost_cents, m.price_cents, m.low_stock, m.notes, m.active, id));
+  await env.DB.batch(stmts);
   return json({ ok: true });
 }
 
@@ -104,9 +124,17 @@ export async function adjust({ env, request, params, user }) {
 
   const stmts = [];
   let linkTx = false;
-  if (v.bool(body.record_money) && (reason === 'sale' || reason === 'restock')) {
-    const fallback = reason === 'sale' ? item.price_cents / 100 : item.unit_cost_cents / 100;
-    const unit = v.money(body.unit_amount ?? fallback, 'Amount per unit');
+  const priced = reason === 'sale' || reason === 'restock';
+  const current = reason === 'sale' ? item.price_cents : item.unit_cost_cents;
+  const unit = priced ? v.money(body.unit_amount, 'Amount per unit', { required: false }) ?? current : 0;
+
+  // Optionally make this sale price / restock cost the item's new price / cost.
+  if (priced && v.bool(body.update_item_amount)) {
+    const update = reason === 'sale' ? { price: unit } : { cost: unit };
+    stmts.push(pricingStmt(env, item, { ...update, allSizes: v.bool(body.all_sizes) }));
+  }
+
+  if (v.bool(body.record_money) && priced) {
     const total = unit * units;
     if (total > 0) {
       const type = reason === 'sale' ? 'revenue' : 'expense';

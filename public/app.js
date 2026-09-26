@@ -510,23 +510,30 @@
         <div class="card metric"><div class="label">Retail value</div><div class="value">${money(retail)}</div></div>
         <div class="card metric"><div class="label">Low / out of stock</div><div class="value ${low ? 'neg' : ''}">${low}</div></div>
       </div>
-      <div class="hint section">Add each size or color as its own item (e.g. "Rain Tee" · M). Use <b>Adjust</b> after every show or restock — selling can record the revenue for you.</div>
+      <div class="hint section">Value = in stock × price (and × cost underneath). Totals above count active items only. Add each size or color as its own item (e.g. "Rain Tee" · M). Use <b>Adjust</b> after every show or restock — selling can record the revenue for you.</div>
       <div class="card section">${merchItems.length ? html`<div class="table-wrap"><table>
-        <thead><tr><th>Item</th><th class="num">In stock</th><th class="num hide-sm">Sold</th><th class="num hide-sm">Cost</th><th class="num">Price</th><th class="num hide-sm">Margin</th><th></th></tr></thead>
+        <thead><tr><th>Item</th><th class="num">In stock</th><th class="num hide-sm">Sold</th><th class="num hide-sm">Cost</th><th class="num hide-sm">Price</th><th class="num hide-sm">Margin</th><th class="num">Value</th><th></th></tr></thead>
         <tbody>${merchItems.map((i) => html`<tr class="${i.active ? '' : 'dim'}">
           <td class="clickable" data-action="edit-item" data-id="${i.id}" style="cursor:pointer"><b>${i.name}</b>${i.variant ? html` <span class="tag">${i.variant}</span>` : ''}
-            <div class="small">${i.sku || ''}${i.active ? '' : ' · inactive'}</div></td>
+            <div class="small">${i.sku || ''}${i.active ? '' : ' · inactive'}</div><div class="small show-sm">${money(i.price_cents)} each</div></td>
           <td class="num"><b>${i.quantity}</b>${i.active && i.quantity <= i.low_stock ? html`<div><span class="tag ${i.quantity === 0 ? 'red' : 'yellow'}">${i.quantity === 0 ? 'Out' : 'Low'}</span></div>` : ''}</td>
           <td class="num hide-sm">${i.units_sold}</td>
           <td class="num hide-sm">${money(i.unit_cost_cents)}</td>
-          <td class="num">${money(i.price_cents)}</td>
+          <td class="num hide-sm">${money(i.price_cents)}</td>
           <td class="num hide-sm">${i.price_cents ? pct((i.price_cents - i.unit_cost_cents) / i.price_cents) : '—'}</td>
-          <td class="num"><button class="btn sm" data-action="adjust-item" data-id="${i.id}">Adjust</button>
-            <button class="btn sm link" data-action="item-history" data-id="${i.id}">History</button></td></tr>`)}</tbody></table></div>`
+          <td class="num">${i.active ? html`${money(i.quantity * i.price_cents)}<div class="small">${money(i.quantity * i.unit_cost_cents)} cost</div>` : '—'}</td>
+          <td class="num item-actions"><button class="btn sm" data-action="adjust-item" data-id="${i.id}">Adjust</button>
+            <button class="btn sm link" data-action="item-history" data-id="${i.id}">History</button></td></tr>`)}</tbody>
+        <tfoot><tr><td>Total</td><td class="num">${units}</td><td class="hide-sm"></td><td class="hide-sm"></td><td class="hide-sm"></td><td class="hide-sm"></td>
+          <td class="num">${money(retail)}<div class="small">${money(cost)} cost</div></td><td></td></tr></tfoot></table></div>`
         : html`<div class="empty">No merch yet. Add your first item.</div>`}</div>`.s;
   }
 
+  // Other sizes/colors of the same item (same name).
+  const otherSizes = (item) => merchItems.filter((i) => i.id !== item.id && i.name.trim().toLowerCase() === (item.name || '').trim().toLowerCase());
+
   function itemForm(item = {}) {
+    const others = item.id ? otherSizes(item) : [];
     openModal({
       title: item.id ? 'Edit item' : 'Add merch item',
       body: html`<div class="form">
@@ -538,6 +545,8 @@
         <label class="f"><span>Low-stock alert at</span><input name="low_stock" type="number" min="0" step="1" value="${item.low_stock ?? 5}"></label>
         <label class="f"><span>SKU (optional)</span><input name="sku" value="${item.sku || ''}"></label>
         ${item.id ? html`<label class="check" style="align-self:end"><input type="checkbox" name="active" ${item.active ? raw('checked') : ''}> Active (uncheck to retire)</label>` : ''}
+        ${others.length ? html`<label class="check full"><input type="checkbox" name="apply_to_all_sizes" checked>
+          Use this cost and price for all sizes of ${item.name} (${others.map((o) => o.variant || 'no size').join(', ')})</label>` : ''}
         <label class="f full"><span>Notes</span><textarea name="notes" placeholder="Supplier, reorder info…">${item.notes || ''}</textarea></label>
       </div>`,
       onSubmit: async (d) => {
@@ -567,6 +576,8 @@
           <label class="f full" data-for="sale giveaway"><span>At show</span><select name="show_id">${showOptions(preset.show_id)}</select></label>
           <label class="check full" data-for="sale restock"><input type="checkbox" name="record_money" checked> <span id="recordLabel"></span></label>
           <label class="f" data-for="sale restock"><span id="unitLabel"></span><input name="unit_amount" type="number" step="0.01" min="0" inputmode="decimal"></label>
+          <label class="check full" data-for="sale restock"><input type="checkbox" name="update_item_amount"> <span id="updateLabel"></span></label>
+          ${otherSizes(item).length ? html`<label class="check full" data-for="sale restock" style="padding-left:24px"><input type="checkbox" name="all_sizes" checked> <span>…for all sizes of ${item.name}</span></label>` : ''}
           <label class="f" data-for="sale restock"><span>Paid via</span><select name="payment_method">${opts([['', '—'], ...PAYMENT])}</select></label>
           <label class="f full"><span>Note</span><input name="note" placeholder="Optional"></label>
         </div>`,
@@ -590,11 +601,15 @@
     if (reason === 'sale') {
       $('#recordLabel').textContent = 'Also record this as Merch revenue';
       $('#unitLabel').textContent = 'Price per unit ($)';
+      $('#updateLabel').textContent = 'Make this the new sale price';
       form.unit_amount.value = dollars(item.price_cents);
+      form.update_item_amount.checked = false;
     } else if (reason === 'restock') {
       $('#recordLabel').textContent = 'Also record the cost as a Merch expense';
       $('#unitLabel').textContent = 'Cost per unit ($)';
+      $('#updateLabel').textContent = 'Make this the new unit cost (updates stock value)';
       form.unit_amount.value = dollars(item.unit_cost_cents);
+      form.update_item_amount.checked = true;
     }
   }
 
