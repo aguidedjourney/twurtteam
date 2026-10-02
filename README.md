@@ -19,6 +19,8 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
   - **Campaigns:** groups posts around a goal, with dates, platforms, an optional ad budget and progress.
   - **Metrics:** weekly follower, view and engagement numbers per platform, a growth chart, and the top posts.
 - **Messages**: a team-wide `# General` chat plus private direct messages. A direct message can only be read by the two people in it, including when one of them is an owner.
+  - Unread messages show as a red count next to Messages, and in the browser tab title.
+  - A new direct message also pops up in the corner of whatever page you're on, with a **Reply** button.
 - **Settings**: change your password and manage who has access.
 
 ## Logins and access
@@ -33,7 +35,7 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
 ## Deploying to Cloudflare (one-time setup)
 
 1. **Create the database.** In the Cloudflare dashboard, go to **Storage & Databases → D1 → Create**, name it `twurtteam`, and copy its **Database ID**. Put the ID in `wrangler.toml` in place of the zeros.
-2. **Create the tables.** Open the database's **Console** tab, paste the full contents of `migrations/0001_init.sql`, and run it.
+2. **Tables.** Nothing to do: the site creates its own tables on first use.
 3. **Connect the site.** Go to **Workers & Pages → Create → Pages → Connect to Git** and pick `aguidedjourney/twurtteam`.
    - Framework preset: *None*
    - Build command: *(leave empty)*
@@ -45,7 +47,7 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
 After this, every push to the production branch redeploys the site automatically.
 
 ### Database updates
-When a new file appears in `migrations/`, open the D1 database's **Console** tab and run the matching file from `docs/d1-console/`. Those versions have the comments stripped out because the console rejects them. They're safe to run more than once.
+These are automatic. When the site deploys, it applies any new files in `migrations/` by itself the first time it's used, so nobody needs the D1 console. After adding or editing a migration, run `npm run schema` to regenerate `src/schema.generated.js`, and keep every statement safe to re-run.
 
 ### Sharing photos and videos
 Content is shared with **Google Drive links**, which keeps everything free. Paste one link per line on a post. Google Drive file links preview right inside the review screen, as long as Drive sharing is set to "Anyone with the link can view" or the file is shared with the viewer's Google account. Folder links and other sites (Dropbox, WeTransfer) open in a new tab.

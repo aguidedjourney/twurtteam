@@ -47,17 +47,28 @@ export async function list({ env, user }) {
   });
 }
 
+// Badge counts plus the newest unread direct messages (for pop-ups).
 export async function unread({ env, user }) {
-  const row = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM messages m JOIN conversations c ON c.id = m.conversation_id
-     WHERE (c.kind = 'channel' OR c.dm_key LIKE ? OR c.dm_key LIKE ?)
-       AND m.user_id IS NOT ?
-       AND m.id > COALESCE((SELECT last_read_id FROM conversation_reads r WHERE r.conversation_id = c.id AND r.user_id = ?), 0)`
-  ).bind(`${user.id}:%`, `%:${user.id}`, user.id, user.id).first();
+  const mine = [`${user.id}:%`, `%:${user.id}`];
+  const unreadWhere = `m.user_id IS NOT ?
+       AND m.id > COALESCE((SELECT last_read_id FROM conversation_reads r WHERE r.conversation_id = c.id AND r.user_id = ?), 0)`;
+  const [counts, dms] = await Promise.all([
+    env.DB.prepare(
+      `SELECT c.kind, COUNT(*) AS n FROM messages m JOIN conversations c ON c.id = m.conversation_id
+       WHERE (c.kind = 'channel' OR c.dm_key LIKE ? OR c.dm_key LIKE ?) AND ${unreadWhere} GROUP BY c.kind`
+    ).bind(...mine, user.id, user.id).all(),
+    env.DB.prepare(
+      `SELECT m.id, m.conversation_id, m.body, m.created_at, u.name AS sender
+       FROM messages m JOIN conversations c ON c.id = m.conversation_id LEFT JOIN users u ON u.id = m.user_id
+       WHERE c.kind = 'dm' AND (c.dm_key LIKE ? OR c.dm_key LIKE ?) AND ${unreadWhere}
+       ORDER BY m.id DESC LIMIT 10`
+    ).bind(...mine, user.id, user.id).all(),
+  ]);
+  const n = (kind) => counts.results.find((r) => r.kind === kind)?.n || 0;
   const review = can(user, 'social_approve')
     ? (await env.DB.prepare(`SELECT COUNT(*) AS n FROM social_posts WHERE status = 'in_review'`).first()).n
     : 0;
-  return json({ messages: row.n, review });
+  return json({ messages: n('channel') + n('dm'), chat: n('channel'), dm: n('dm'), dms: dms.results.reverse(), review });
 }
 
 // Opens (or creates) the DM with another person.

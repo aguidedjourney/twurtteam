@@ -3,6 +3,7 @@
 
 import { HttpError, json } from '../../src/http.js';
 import { can } from '../../src/permissions.js';
+import { ensureSchema } from '../../src/migrate.js';
 import * as auth from '../../src/auth.js';
 import * as users from '../../src/routes/users.js';
 import * as tx from '../../src/routes/transactions.js';
@@ -100,6 +101,7 @@ export async function onRequest({ request, env }) {
   const url = new URL(request.url);
   try {
     if (!env.DB) throw new HttpError(500, 'Database is not connected (missing DB binding)');
+    await ensureSchema(env);
 
     // Block cross-site form posts: state-changing requests must come from this site.
     if (request.method !== 'GET') {

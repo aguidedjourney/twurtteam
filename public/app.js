@@ -104,7 +104,9 @@
     const nav = allowedPages().map((p) => html`<a href="#/${p}" class="${p === page ? 'active' : ''}">${PAGES[p].label}${PAGES[p].badge ? html` <span class="nav-count" data-badge="${PAGES[p].badge}" hidden></span>` : ''}</a>`);
     root.innerHTML = html`
       <div class="mobilebar">
-        <div class="row1"><img src="/logo.png" alt="Twurt"><button class="btn sm" data-action="logout">Sign out</button></div>
+        <div class="row1"><img src="/logo.png" alt="Twurt">
+          <div class="actions">${can('messages') ? html`<a class="btn sm" href="#/messages" aria-label="Messages">💬 <span class="nav-count" data-badge="messages" hidden></span></a>` : ''}
+            <button class="btn sm" data-action="logout">Sign out</button></div></div>
         <nav class="nav">${nav}</nav>
       </div>
       <div class="app">
@@ -1320,10 +1322,47 @@
       for (const [key, n] of [['messages', u.messages], ['social', u.review]]) {
         $$(`[data-badge="${key}"]`).forEach((b) => { b.textContent = n; b.hidden = !n; });
       }
-    } catch { /* tables not created yet, or offline */ }
+      document.title = u.messages ? `(${u.messages}) Team Twurt` : 'Team Twurt';
+      showDmPopups(u.dms || []);
+    } catch { /* offline */ }
   }
 
-  // Live updates: new messages every 5s while chatting, badges every 30s.
+  // ---- Direct message pop-ups
+  // One card per conversation with unread DMs. A DM pops up once (remembered per
+  // browser), and its card goes away once the conversation has been read.
+  const seenKey = () => `tt_seen_dm_${state.user.id}`;
+  function seenDm(id) {
+    try {
+      if (id !== undefined) localStorage.setItem(seenKey(), String(id));
+      return Number(localStorage.getItem(seenKey()) || 0);
+    } catch { return id || 0; }
+  }
+
+  function showDmPopups(dms) {
+    const box = $('#popups');
+    const viewing = currentPage() === 'messages' ? msgState.convId : null;
+    const unreadConvs = new Set(dms.map((m) => m.conversation_id));
+    // Remove cards for conversations that have since been read.
+    $$('.popup', box).forEach((el) => { if (!unreadConvs.has(Number(el.dataset.conv))) el.remove(); });
+    const seen = seenDm();
+    const fresh = dms.filter((m) => m.id > seen && m.conversation_id !== viewing);
+    if (dms.length) seenDm(Math.max(seen, ...dms.map((m) => m.id)));
+    for (const convId of new Set(fresh.map((m) => m.conversation_id))) {
+      const all = dms.filter((m) => m.conversation_id === convId);
+      const last = all[all.length - 1];
+      $(`.popup[data-conv="${convId}"]`, box)?.remove();
+      box.insertAdjacentHTML('beforeend', html`
+        <div class="popup" role="alert" data-conv="${convId}">
+          <div class="popup-head"><b>${last.sender || 'Teammate'}</b><span class="small"> sent you a message</span>
+            <button class="btn link sm" data-action="popup-close" data-conv="${convId}" aria-label="Dismiss">✕</button></div>
+          <div class="popup-body">${last.body.length > 160 ? last.body.slice(0, 160) + '…' : last.body}</div>
+          ${all.length > 1 ? html`<div class="small">+${all.length - 1} more</div>` : ''}
+          <div class="popup-actions"><button class="btn primary sm" data-action="popup-open" data-conv="${convId}">Reply</button></div>
+        </div>`.s);
+    }
+  }
+
+  // Live updates: new messages every 5s while chatting, badges and pop-ups every 10s.
   setInterval(() => {
     if (!state.user || document.hidden) return;
     msgState.tick++;
@@ -1331,7 +1370,7 @@
       pollMessages().catch(() => {});
       if (msgState.tick % 3 === 0) refreshConvList().catch(() => {});
     }
-    if (msgState.tick % 6 === 0) updateBadges();
+    if (msgState.tick % 2 === 0) updateBadges();
   }, 5000);
 
   // ---------------------------------------------------------------- settings
@@ -1384,7 +1423,14 @@
 
   // ---------------------------------------------------------------- events
   const actions = {
-    'logout': async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); state.user = null; state.shows = null; render(); },
+    'logout': async () => {
+      await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      state.user = null;
+      state.shows = null;
+      $('#popups').innerHTML = '';
+      document.title = 'Team Twurt';
+      render();
+    },
     'close-modal': () => closeModal(),
     'modal-delete': async () => {
       try {
@@ -1467,6 +1513,11 @@
       await api(`/api/social/media/${d.id}`, { method: 'DELETE' });
       await postDetail(state.post.post.id);
       refresh();
+    },
+    'popup-close': (d) => { $(`.popup[data-conv="${d.conv}"]`)?.remove(); },
+    'popup-open': (d) => {
+      $(`.popup[data-conv="${d.conv}"]`)?.remove();
+      location.hash = '#/messages/' + d.conv;
     },
     'new-campaign': () => campaignForm(),
     'edit-campaign': (d) => campaignForm(campaignsCache.find((c) => String(c.id) === d.id)),

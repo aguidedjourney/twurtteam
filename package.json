@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "schema": "node scripts/build-schema.mjs",
     "db:migrate:local": "wrangler d1 migrations apply twurtteam --local",
     "db:migrate:remote": "wrangler d1 migrations apply twurtteam --remote",
     "dev": "wrangler pages dev",
