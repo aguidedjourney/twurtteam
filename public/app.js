@@ -776,6 +776,25 @@
   const num = (n) => n == null ? '—' : Number(n).toLocaleString('en-US');
   const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
   const fileSize = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+  const postLinks = (p) => String(p.external_link || '').split('\n').filter(Boolean);
+  // Google Drive file links can be previewed inline; folders and other sites open in a new tab.
+  function driveFileId(link) {
+    try {
+      const u = new URL(link);
+      if (!/(^|\.)drive\.google\.com$/.test(u.hostname)) return null;
+      const m = u.pathname.match(/\/file\/d\/([\w-]{10,})/);
+      const id = m ? m[1] : u.searchParams.get('id');
+      return id && /^[\w-]{10,}$/.test(id) && !u.pathname.includes('/folders/') ? id : null;
+    } catch { return null; }
+  }
+  const linkLabel = (link) => {
+    try {
+      const u = new URL(link);
+      if (u.hostname.endsWith('drive.google.com')) return u.pathname.includes('/folders/') ? 'Google Drive folder' : 'Google Drive file';
+      if (u.hostname.endsWith('dropbox.com')) return 'Dropbox';
+      return u.hostname.replace(/^www\./, '');
+    } catch { return 'Link'; }
+  };
   const statusTag = (s) => { const [l, c] = POST_STATUS[s] || [s, '']; return html`<span class="tag ${c}">${l}</span>`; };
 
   async function pageSocial(el) {
@@ -845,7 +864,7 @@
       <div class="thumb">${p.cover_media_id
         ? (p.cover_type.startsWith('image/') ? html`<img src="${mediaUrl(p.cover_media_id)}" alt="" loading="lazy">`
           : html`<video src="${mediaUrl(p.cover_media_id)}#t=0.5" preload="metadata" muted playsinline></video><span class="play">▶</span>`)
-        : html`<span class="small">${p.external_link ? 'Files linked' : 'No media yet'}</span>`}
+        : html`<span class="small">${postLinks(p).length ? `${postLinks(p).length} link${postLinks(p).length > 1 ? 's' : ''} to content` : 'No content linked yet'}</span>`}
         ${p.media_count > 1 ? html`<span class="count">+${p.media_count - 1}</span>` : ''}</div>
       <div class="row-between"><b>${p.title}</b>${statusTag(p.status)}</div>
       <div class="small" style="margin-top:4px">${platformChips(p.platforms)} · ${p.post_type || 'post'}</div>
@@ -882,10 +901,14 @@
           ${m.content_type.startsWith('image/') ? html`<a href="${mediaUrl(m.id)}" target="_blank" rel="noopener"><img src="${mediaUrl(m.id)}" alt="${m.filename}"></a>`
             : html`<video src="${mediaUrl(m.id)}" controls preload="metadata" playsinline></video>`}
           <figcaption>${m.filename} · ${fileSize(m.size)}${d.canEdit ? html` <button type="button" class="btn link sm" data-action="media-delete" data-id="${m.id}">Remove</button>` : ''}</figcaption></figure>`)}</div>` : ''}
-        ${d.canEdit ? (d.uploads
-          ? html`<div style="margin:8px 0"><label class="btn sm">+ Add photos / videos<input type="file" accept="image/*,video/*" multiple data-change="post-upload" hidden></label> <span class="small">Up to 95 MB each</span></div>`
-          : html`<div class="hint" style="margin:8px 0">File uploads aren't switched on yet. Use <b>Edit → Link to files</b> (Google Drive, Dropbox) for now.</div>`) : ''}
-        ${p.external_link ? html`<p><a href="${p.external_link}" target="_blank" rel="noopener noreferrer">Open linked files ↗</a></p>` : ''}
+        ${d.canEdit && d.uploads ? html`<div style="margin:8px 0"><label class="btn sm">+ Add photos / videos<input type="file" accept="image/*,video/*" multiple data-change="post-upload" hidden></label> <span class="small">Up to 95 MB each</span></div>` : ''}
+        ${postLinks(p).length ? html`<div class="link-grid">${postLinks(p).map((l) => {
+          const id = driveFileId(l);
+          return html`<div class="link-item">${id ? html`<iframe src="https://drive.google.com/file/d/${id}/preview" allow="autoplay" loading="lazy" title="Google Drive preview"></iframe>` : ''}
+            <a href="${l}" target="_blank" rel="noopener noreferrer">Open ${linkLabel(l)} ↗</a></div>`;
+        })}</div>
+          <div class="small" style="margin-top:4px">Preview blank? In Drive, set sharing to <b>Anyone with the link can view</b>, or share the file with your Google account.</div>`
+          : !d.media.length ? html`<div class="hint" style="margin:8px 0">No content linked yet.${d.canEdit ? html` Use <b>Edit</b> to add Google Drive links.` : ''}</div>` : ''}
         <h4>Caption</h4>
         <div class="caption">${p.caption || '—'}</div>
         ${p.hashtags ? html`<div class="small" style="margin-top:6px">${p.hashtags}</div>` : ''}
@@ -943,9 +966,10 @@
         <label class="f full"><span>Campaign</span><select name="campaign_id">${opts([['', '— None —'], ...campaigns.map((c) => [c.id, c.name])], p.campaign_id ?? preset.campaign_id)}</select></label>
         <label class="f full"><span>Caption</span><textarea name="caption" rows="5">${p.caption || ''}</textarea></label>
         <label class="f full"><span>Hashtags</span><input name="hashtags" value="${p.hashtags || ''}" placeholder="#twurtchamberlain #countrypunkblack"></label>
-        <label class="f full"><span>Link to files (optional)</span><input name="external_link" type="url" value="${p.external_link || ''}" placeholder="Google Drive or Dropbox link, e.g. for big videos"></label>
+        <label class="f full"><span>Links to the photos / videos (one per line)</span><textarea name="external_link" rows="3" placeholder="https://drive.google.com/file/d/…">${p.external_link || ''}</textarea></label>
+        <div class="hint full">In Google Drive: right-click the file → <b>Share</b> → <b>Copy link</b>. Set it to <b>Anyone with the link can view</b> so Twurt can preview it here. Linking each file separately (instead of a folder) lets it play right in the review screen.</div>
         ${!p.id && state.features.uploads ? html`<label class="f full"><span>Photos / videos</span><input type="file" name="files" accept="image/*,video/*" multiple></label>` : ''}
-        ${!p.id ? html`<div class="hint full">Saves as a draft. When it's ready, open it and click <b>Send to Twurt for review</b>.</div>` : ''}
+        ${!p.id ? html`<div class="hint full">Saves as a draft. ${can('social_approve') ? html`Open it to approve it when it's ready.` : html`When it's ready, open it and click <b>Send to Twurt for review</b>.`}</div>` : ''}
       </div>`,
       onSubmit: async (d) => {
         d.platforms = Object.keys(PLATFORMS).filter((k) => d['pf_' + k]);

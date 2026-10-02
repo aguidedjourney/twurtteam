@@ -14,7 +14,7 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
   - Project goals have checklist steps.
 - **Social** (owners + social media manager):
   - **Overview:** shows what's waiting for review, what's coming up, follower growth and active campaigns.
-  - **Content:** the social manager drafts a post (caption, hashtags, platforms, planned time, photos/videos or a Drive link) and sends it to Twurt for review. Twurt or Britney approves it or requests changes, and each post has its own comment thread. Then it gets marked scheduled or posted, with the live link and results.
+  - **Content:** the social manager drafts a post (caption, hashtags, platforms, planned time, and Google Drive links to the photos/videos) and sends it to Twurt for review. Twurt or Britney approves it or requests changes, and each post has its own comment thread. Then it gets marked scheduled or posted, with the live link and results.
   - **Calendar:** a month view of planned posts.
   - **Campaigns:** groups posts around a goal, with dates, platforms, an optional ad budget and progress.
   - **Metrics:** weekly follower, view and engagement numbers per platform, a growth chart, and the top posts.
@@ -47,11 +47,10 @@ After this, every push to the production branch redeploys the site automatically
 ### Database updates
 When a new file appears in `migrations/`, open the D1 database's **Console** tab and run the matching file from `docs/d1-console/`. Those versions have the comments stripped out because the console rejects them. They're safe to run more than once.
 
-### Photo/video uploads (Cloudflare R2)
-1. In Cloudflare, go to **R2 Object Storage**, click **Create bucket** and name it `twurtteam-media`. Cloudflare asks for a payment method to turn on R2, but the first 10 GB are free.
-2. In `wrangler.toml`, remove the `#` from the three `[[r2_buckets]]` lines and push.
+### Sharing photos and videos
+Content is shared with **Google Drive links**, which keeps everything free. Paste one link per line on a post. Google Drive file links preview right inside the review screen, as long as Drive sharing is set to "Anyone with the link can view" or the file is shared with the viewer's Google account. Folder links and other sites (Dropbox, WeTransfer) open in a new tab.
 
-Until then, posts can link to files in Google Drive or Dropbox instead. Files must be under 95 MB each; use a link for anything bigger.
+Direct uploads via Cloudflare R2 are built in but switched off (R2 requires a card on file). See the note in `wrangler.toml` if you ever want them.
 
 ## Running locally
 

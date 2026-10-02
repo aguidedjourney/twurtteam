@@ -212,6 +212,11 @@ dialog h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; co
 .reply { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
 .reply textarea { min-height: 44px; }
 
+.link-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin: 8px 0; align-items: start; }
+.link-item { background: #0f0f0f; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.link-item iframe { width: 100%; aspect-ratio: 4 / 5; border: 0; display: block; background: #000; }
+.link-item a { display: block; padding: 8px 10px; font-size: 13px; }
+
 /* Calendar */
 .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .cal .dow { font-size: 11px; color: var(--muted); text-transform: uppercase; text-align: center; padding: 4px 0; }

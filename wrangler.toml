@@ -8,9 +8,10 @@ database_name = "twurtteam"
 database_id = "0218ca29-1bb1-48f4-b3b2-4bd3c0dd61ae"
 migrations_dir = "migrations"
 
-# Photo/video uploads for social posts (Cloudflare R2).
-# Create a bucket named "twurtteam-media" in Cloudflare (R2 -> Create bucket),
-# then remove the "#" from the three lines below.
+# Optional, currently off: direct photo/video uploads (Cloudflare R2 needs a card
+# on file). The team shares content with Google Drive links instead. To turn
+# uploads on later, create an R2 bucket named "twurtteam-media" and remove the
+# "#" from the three lines below.
 # [[r2_buckets]]
 # binding = "MEDIA"
 # bucket_name = "twurtteam-media"

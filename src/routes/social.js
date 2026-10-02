@@ -31,6 +31,13 @@ function url(val, name) {
   return s;
 }
 
+// Links to the content (Google Drive, Dropbox…), one per line.
+function links(val) {
+  const list = String(val || '').split(/\s*\n\s*/).map((l) => l.trim()).filter(Boolean);
+  if (list.length > 10) throw new HttpError(400, 'Add up to 10 links');
+  return list.length ? list.map((l) => url(l, 'Each link')).join('\n') : null;
+}
+
 async function campaignExists(env, id) {
   if (id && !(await env.DB.prepare('SELECT 1 FROM campaigns WHERE id = ?').bind(id).first())) {
     throw new HttpError(400, 'That campaign no longer exists');
@@ -179,7 +186,7 @@ async function cleanPost(env, body) {
     post_type: v.oneOf(body.post_type, 'Type', POST_TYPES, 'post'),
     planned_at: dateTime(body.planned_at, 'Planned time'),
     campaign_id: await campaignExists(env, v.id(body.campaign_id, 'Campaign')),
-    external_link: url(body.external_link, 'Link to files'),
+    external_link: links(body.external_link),
   };
 }
 const POST_COLS = ['title', 'caption', 'hashtags', 'platforms', 'post_type', 'planned_at', 'campaign_id', 'external_link'];
@@ -243,7 +250,7 @@ export async function setStatus({ env, request, params, user }) {
   const note = v.str(body.note, 'Note', { max: 2000 });
   if (status === 'changes_requested' && !note) throw new HttpError(400, 'Say what should change');
   if (status === 'in_review' && !post.caption && !post.media_count && !post.external_link) {
-    throw new HttpError(400, 'Add a caption, a file or a link before sending for review');
+    throw new HttpError(400, 'Add a caption or a link to the content before sending for review');
   }
 
   const stmts = [];
