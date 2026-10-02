@@ -61,7 +61,7 @@ async function userCount(env) {
 
 export async function status({ env, request }) {
   const [count, user] = await Promise.all([userCount(env), currentUser(env, request)]);
-  return json({ needsSetup: count === 0, user: publicUser(user), roles: ROLES });
+  return json({ needsSetup: count === 0, user: publicUser(user), roles: ROLES, features: { uploads: !!env.MEDIA } });
 }
 
 // One-time creation of the first owner account. Requires the SETUP_KEY secret.

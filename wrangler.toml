@@ -7,3 +7,10 @@ binding = "DB"
 database_name = "twurtteam"
 database_id = "0218ca29-1bb1-48f4-b3b2-4bd3c0dd61ae"
 migrations_dir = "migrations"
+
+# Photo/video uploads for social posts (Cloudflare R2).
+# Create a bucket named "twurtteam-media" in Cloudflare (R2 -> Create bucket),
+# then remove the "#" from the three lines below.
+# [[r2_buckets]]
+# binding = "MEDIA"
+# bucket_name = "twurtteam-media"

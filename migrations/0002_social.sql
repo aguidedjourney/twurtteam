@@ -1,0 +1,106 @@
+-- Social media: campaigns, content review, metrics, team messaging
+
+CREATE TABLE IF NOT EXISTS campaigns (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  objective    TEXT,
+  platforms    TEXT,                          -- comma list: instagram,tiktok
+  start_date   TEXT,
+  end_date     TEXT,
+  status       TEXT NOT NULL DEFAULT 'planning', -- planning | active | done
+  budget_cents INTEGER,
+  notes        TEXT,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- status: draft | in_review | changes_requested | approved | scheduled | posted
+CREATE TABLE IF NOT EXISTS social_posts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  title         TEXT NOT NULL,
+  caption       TEXT,
+  hashtags      TEXT,
+  platforms     TEXT,
+  post_type     TEXT,                         -- post | reel | story | video | carousel | live
+  planned_at    TEXT,                         -- local time, YYYY-MM-DDTHH:MM
+  campaign_id   INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+  status        TEXT NOT NULL DEFAULT 'draft',
+  external_link TEXT,                         -- e.g. Google Drive link to large files
+  post_url      TEXT,
+  posted_at     TEXT,
+  views         INTEGER,
+  likes         INTEGER,
+  comments      INTEGER,
+  shares        INTEGER,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_posts_status ON social_posts(status);
+CREATE INDEX IF NOT EXISTS idx_posts_planned ON social_posts(planned_at);
+
+CREATE TABLE IF NOT EXISTS post_media (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id      INTEGER NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  r2_key       TEXT NOT NULL,
+  filename     TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size         INTEGER NOT NULL,
+  uploaded_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_media_post ON post_media(post_id);
+
+-- Review thread and status history for a post. kind: comment | status
+CREATE TABLE IF NOT EXISTS post_comments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id    INTEGER NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  kind       TEXT NOT NULL DEFAULT 'comment',
+  status     TEXT,
+  body       TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_post ON post_comments(post_id);
+
+-- One snapshot per platform per date, entered by hand for now.
+CREATE TABLE IF NOT EXISTS social_metrics (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  date       TEXT NOT NULL,
+  platform   TEXT NOT NULL,
+  followers  INTEGER,
+  views      INTEGER,
+  engagement INTEGER,
+  posts      INTEGER,
+  notes      TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (date, platform)
+);
+
+-- kind: channel (everyone) | dm (two people; dm_key = "lowId:highId")
+CREATE TABLE IF NOT EXISTS conversations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,
+  name       TEXT,
+  dm_key     TEXT UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body            TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS conversation_reads (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  last_read_id    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, conversation_id)
+);
+
+INSERT INTO conversations (kind, name) SELECT 'channel', 'General' WHERE NOT EXISTS (SELECT 1 FROM conversations WHERE kind = 'channel');

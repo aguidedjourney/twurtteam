@@ -12,14 +12,23 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
 - **Goals**:
   - Financial goals track progress automatically from transactions: revenue earned, net profit, or a spending budget. They can also be tracked by hand, for example a savings reserve.
   - Project goals have checklist steps.
+- **Social** (owners + social media manager):
+  - **Overview:** shows what's waiting for review, what's coming up, follower growth and active campaigns.
+  - **Content:** the social manager drafts a post (caption, hashtags, platforms, planned time, photos/videos or a Drive link) and sends it to Twurt for review. Twurt or Britney approves it or requests changes, and each post has its own comment thread. Then it gets marked scheduled or posted, with the live link and results.
+  - **Calendar:** a month view of planned posts.
+  - **Campaigns:** groups posts around a goal, with dates, platforms, an optional ad budget and progress.
+  - **Metrics:** weekly follower, view and engagement numbers per platform, a growth chart, and the top posts.
+- **Messages**: a team-wide `# General` chat plus private direct messages. A direct message can only be read by the two people in it, including when one of them is an owner.
 - **Settings**: change your password and manage who has access.
 
 ## Logins and access
 
 - Passwords are hashed (PBKDF2). Sessions use secure, HttpOnly cookies.
 - 5 wrong passwords lock the account for 15 minutes.
-- Access is role-based (`src/permissions.js`). Right now there's one role, **owner**, which has full access. Twurt and Britney are both owners.
-- When the publicist and social manager join, a new role gets added for each one, listing only the areas they need. Then build their interfaces.
+- Access is role-based (`src/permissions.js`):
+  - **Owner** (Twurt and Britney): full access.
+  - **Social media manager**: only Social and Messages. Can't approve posts and can't see money, shows, merch or goals.
+  - New roles, such as a publicist, get added there with only the areas they need.
 
 ## Deploying to Cloudflare (one-time setup)
 
@@ -35,7 +44,14 @@ It runs on Cloudflare Pages, with Pages Functions for the API and a D1 database 
 
 After this, every push to the production branch redeploys the site automatically.
 
-If you change the database later, add a new file in `migrations/` and run it in the D1 console, or run `npm run db:migrate:remote`.
+### Database updates
+When a new file appears in `migrations/`, open the D1 database's **Console** tab and run the matching file from `docs/d1-console/`. Those versions have the comments stripped out because the console rejects them. They're safe to run more than once.
+
+### Photo/video uploads (Cloudflare R2)
+1. In Cloudflare, go to **R2 Object Storage**, click **Create bucket** and name it `twurtteam-media`. Cloudflare asks for a payment method to turn on R2, but the first 10 GB are free.
+2. In `wrangler.toml`, remove the `#` from the three `[[r2_buckets]]` lines and push.
+
+Until then, posts can link to files in Google Drive or Dropbox instead. Files must be under 95 MB each; use a link for anything bigger.
 
 ## Running locally
 

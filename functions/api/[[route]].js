@@ -10,6 +10,8 @@ import * as shows from '../../src/routes/shows.js';
 import * as merch from '../../src/routes/merch.js';
 import * as goals from '../../src/routes/goals.js';
 import { summary } from '../../src/routes/summary.js';
+import * as social from '../../src/routes/social.js';
+import * as msg from '../../src/routes/messages.js';
 
 const PUBLIC = null; // no login required
 const ANY = 'any'; // any signed-in user
@@ -49,6 +51,33 @@ const routes = [
   ['POST', '/api/goals/:id/milestones', 'goals', goals.addMilestone],
   ['PUT', '/api/milestones/:id', 'goals', goals.updateMilestone],
   ['DELETE', '/api/milestones/:id', 'goals', goals.removeMilestone],
+
+  ['GET', '/api/social/overview', 'social', social.overview],
+  ['GET', '/api/social/campaigns', 'social', social.listCampaigns],
+  ['POST', '/api/social/campaigns', 'social', social.createCampaign],
+  ['PUT', '/api/social/campaigns/:id', 'social', social.updateCampaign],
+  ['DELETE', '/api/social/campaigns/:id', 'social', social.removeCampaign],
+  ['GET', '/api/social/posts', 'social', social.listPosts],
+  ['POST', '/api/social/posts', 'social', social.createPost],
+  ['GET', '/api/social/posts/:id', 'social', social.getPost],
+  ['PUT', '/api/social/posts/:id', 'social', social.updatePost],
+  ['DELETE', '/api/social/posts/:id', 'social', social.removePost],
+  ['POST', '/api/social/posts/:id/status', 'social', social.setStatus],
+  ['PUT', '/api/social/posts/:id/results', 'social', social.updateResults],
+  ['POST', '/api/social/posts/:id/comments', 'social', social.addComment],
+  ['POST', '/api/social/posts/:id/media', 'social', social.uploadMedia],
+  ['GET', '/api/social/media/:id', 'social', social.getMedia],
+  ['DELETE', '/api/social/media/:id', 'social', social.removeMedia],
+  ['GET', '/api/social/metrics', 'social', social.listMetrics],
+  ['POST', '/api/social/metrics', 'social', social.saveMetric],
+  ['DELETE', '/api/social/metrics/:id', 'social', social.removeMetric],
+
+  ['GET', '/api/team', 'messages', msg.team],
+  ['GET', '/api/conversations', 'messages', msg.list],
+  ['GET', '/api/conversations/unread', ANY, msg.unread],
+  ['POST', '/api/conversations/dm', 'messages', msg.openDm],
+  ['GET', '/api/conversations/:id/messages', 'messages', msg.messages],
+  ['POST', '/api/conversations/:id/messages', 'messages', msg.send],
 
   ['GET', '/api/users', 'users', users.list],
   ['POST', '/api/users', 'users', users.create],

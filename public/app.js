@@ -68,7 +68,7 @@
   const REASONS = { sale: 'Sold', restock: 'Restocked', giveaway: 'Gave away', damaged: 'Damaged / lost', correction: 'Count correction', initial: 'Starting stock' };
 
   // ---------------------------------------------------------------- state + routing
-  const state = { user: null, needsSetup: false, roles: {}, shows: null };
+  const state = { user: null, needsSetup: false, roles: {}, features: {}, shows: null };
 
   const PAGES = {
     dashboard: { label: 'Dashboard', area: 'finance', render: pageDashboard },
@@ -76,6 +76,8 @@
     shows: { label: 'Shows', area: 'shows', render: pageShows },
     merch: { label: 'Merch', area: 'merch', render: pageMerch },
     goals: { label: 'Goals', area: 'goals', render: pageGoals },
+    social: { label: 'Social', area: 'social', render: pageSocial, badge: 'social' },
+    messages: { label: 'Messages', area: 'messages', render: pageMessages, badge: 'messages' },
     settings: { label: 'Settings', area: null, render: pageSettings },
   };
 
@@ -86,7 +88,7 @@
   const allowedPages = () => Object.keys(PAGES).filter((p) => can(PAGES[p].area));
 
   function currentPage() {
-    const p = location.hash.replace(/^#\/?/, '').split('?')[0];
+    const p = location.hash.replace(/^#\/?/, '').split('?')[0].split('/')[0];
     const allowed = allowedPages();
     return allowed.includes(p) ? p : allowed[0];
   }
@@ -99,7 +101,7 @@
       return;
     }
     const page = currentPage();
-    const nav = allowedPages().map((p) => html`<a href="#/${p}" class="${p === page ? 'active' : ''}">${PAGES[p].label}</a>`);
+    const nav = allowedPages().map((p) => html`<a href="#/${p}" class="${p === page ? 'active' : ''}">${PAGES[p].label}${PAGES[p].badge ? html` <span class="nav-count" data-badge="${PAGES[p].badge}" hidden></span>` : ''}</a>`);
     root.innerHTML = html`
       <div class="mobilebar">
         <div class="row1"><img src="/logo.png" alt="Twurt"><button class="btn sm" data-action="logout">Sign out</button></div>
@@ -116,6 +118,7 @@
         </aside>
         <main class="main" id="view"><div class="empty">Loading…</div></main>
       </div>`.s;
+    updateBadges();
     await refresh();
   }
 
@@ -735,6 +738,578 @@
     start_date: g.start_date, due_date: g.due_date, status: g.status, owner: g.owner, notes: g.notes, ...patch,
   });
 
+  // ---------------------------------------------------------------- social media
+  // Platform colors follow the platform everywhere (validated categorical set for the dark surface).
+  const PLATFORMS = {
+    instagram: { label: 'Instagram', color: '#3987e5' },
+    tiktok: { label: 'TikTok', color: '#d95926' },
+    youtube: { label: 'YouTube', color: '#199e70' },
+    facebook: { label: 'Facebook', color: '#c98500' },
+  };
+  const POST_TYPES = ['post', 'reel', 'story', 'video', 'carousel', 'live'];
+  const POST_STATUS = {
+    draft: ['Draft', ''], in_review: ['Needs review', 'yellow'], changes_requested: ['Changes requested', 'red'],
+    approved: ['Approved', 'green'], scheduled: ['Scheduled', 'green'], posted: ['Posted', ''],
+  };
+  const STATUS_VERB = {
+    in_review: 'sent this for review', draft: 'withdrew it from review', approved: 'approved it',
+    changes_requested: 'asked for changes', scheduled: 'marked it scheduled', posted: 'marked it posted',
+  };
+  const CAMPAIGN_STATUS = { planning: ['Planning', 'yellow'], active: ['Active', 'green'], done: ['Done', ''] };
+  const SOCIAL_TABS = [['', 'Overview'], ['content', 'Content'], ['calendar', 'Calendar'], ['campaigns', 'Campaigns'], ['metrics', 'Metrics']];
+  const SOCIAL_TITLES = { '': 'Grow the audience.', content: 'Content & review.', calendar: 'Content calendar.', campaigns: 'Campaigns.', metrics: 'Metrics & growth.' };
+  const CONTENT_FILTERS = [['active', 'In progress'], ['in_review', 'Needs review'], ['approved', 'Approved'], ['posted', 'Posted'], ['all', 'All']];
+  const FILTER_STATUSES = { active: 'draft,in_review,changes_requested,approved,scheduled', in_review: 'in_review', approved: 'approved,scheduled', posted: 'posted', all: '' };
+
+  const subPage = () => location.hash.replace(/^#\/?/, '').split('?')[0].split('/')[1] || '';
+  const hashParam = (k) => new URLSearchParams(location.hash.split('?')[1] || '').get(k);
+  const plist = (s) => String(s || '').split(',').filter(Boolean);
+  const platformChips = (s) => plist(s).map((p) => html`<span class="pchip"><i style="background:${PLATFORMS[p]?.color || '#777'}"></i>${PLATFORMS[p]?.label || p}</span>`);
+  const fmtWhen = (s) => {
+    if (!s) return '';
+    const timed = s.length > 10;
+    return new Date(timed ? s : s + 'T00:00').toLocaleString('en-US', timed
+      ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric' });
+  };
+  const fmtTime = (s) => new Date(s).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const fmtStamp = (s) => s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const num = (n) => n == null ? '—' : Number(n).toLocaleString('en-US');
+  const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+  const fileSize = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+  const statusTag = (s) => { const [l, c] = POST_STATUS[s] || [s, '']; return html`<span class="tag ${c}">${l}</span>`; };
+
+  async function pageSocial(el) {
+    const sub = subPage();
+    const tab = SOCIAL_TABS.some(([k]) => k === sub) ? sub : '';
+    const button = tab === 'metrics' ? html`<button class="btn primary" data-action="log-metric">+ Log numbers</button>`
+      : tab === 'campaigns' ? html`<button class="btn primary" data-action="new-campaign">+ Campaign</button>`
+        : html`<button class="btn primary" data-action="new-post">+ New post</button>`;
+    const body = await { '': socialOverview, content: socialContent, calendar: socialCalendar, campaigns: socialCampaigns, metrics: socialMetrics }[tab]();
+    el.innerHTML = html`
+      <div class="top"><div><div class="eyebrow">Social media</div><div class="title">${SOCIAL_TITLES[tab]}</div></div><div class="actions">${button}</div></div>
+      <nav class="tabs">${SOCIAL_TABS.map(([k, l]) => html`<a href="#/social${k ? '/' + k : ''}" class="${k === tab ? 'on' : ''}">${l}</a>`)}</nav>
+      ${body}`.s;
+    if (tab === 'metrics') drawChart();
+  }
+
+  async function socialOverview() {
+    const d = await api('/api/social/overview');
+    const c = d.counts;
+    const tile = (f, label, n, note) => html`<a class="card metric link-card" href="#/social/content?f=${f}"><div class="label">${label}</div><div class="value">${n || 0}</div><div class="small">${note}</div></a>`;
+    return html`
+      <div class="grid g4">
+        ${tile('in_review', 'Waiting for review', c.in_review, d.canApprove ? 'Needs your OK' : 'With Twurt')}
+        ${tile('active', 'Changes requested', c.changes_requested, 'Back to the drawing board')}
+        ${tile('approved', 'Approved to post', (c.approved || 0) + (c.scheduled || 0), 'Approved or scheduled')}
+        ${tile('posted', 'Posted', c.posted, 'All time')}
+      </div>
+      <div class="grid g21 section">
+        <div class="card"><div class="card-head"><h2>Coming up</h2><a class="btn sm" href="#/social/calendar">Calendar</a></div>
+          ${d.upcoming.length ? d.upcoming.map((p) => html`<div class="list-item clickable" data-action="post-detail" data-id="${p.id}">
+              <div class="grow"><b>${p.title}</b><div class="small">${platformChips(p.platforms)}${p.campaign_name ? ' · ' + p.campaign_name : ''}</div></div>
+              <div style="text-align:right"><div class="small">${fmtWhen(p.planned_at)}</div>${statusTag(p.status)}</div></div>`)
+            : html`<div class="empty">Nothing planned yet. <a href="#" data-action="new-post">Plan a post</a>.</div>`}
+        </div>
+        <div class="card"><div class="card-head"><h2>Followers</h2><a class="btn sm" href="#/social/metrics">Metrics</a></div>
+          ${d.followers.length ? d.followers.map((f) => {
+            const diff = f.prior ? f.followers - f.prior.followers : null;
+            return html`<div class="list-item"><div class="grow">${platformChips(f.platform)}<div class="small">as of ${fmtDate(f.date)}</div></div>
+              <div style="text-align:right"><b>${num(f.followers)}</b>${diff != null ? html`<div class="small ${diff < 0 ? 'neg' : 'pos'}">${diff < 0 ? '▼ ' : '▲ +'}${num(diff)} in 30 days</div>` : ''}</div></div>`;
+          }) : html`<div class="empty">No numbers yet. <a href="#/social/metrics">Log this week's numbers</a>.</div>`}
+          <h2 style="margin-top:18px">Active campaigns</h2>
+          ${d.campaigns.length ? d.campaigns.map((cp) => html`<div class="list-item"><div class="grow"><b>${cp.name}</b><div class="small">${cp.post_count} posts${cp.end_date ? ' · ends ' + fmtDate(cp.end_date) : ''}</div></div>
+              <a class="btn sm" href="#/social/content?f=all&campaign=${cp.id}">Posts</a></div>`)
+            : html`<div class="small">None active. <a href="#/social/campaigns">Plan one</a>.</div>`}
+        </div>
+      </div>`;
+  }
+
+  async function socialContent() {
+    const f = FILTER_STATUSES[hashParam('f')] !== undefined ? hashParam('f') : 'active';
+    const campaign = hashParam('campaign');
+    const q = new URLSearchParams();
+    if (FILTER_STATUSES[f]) q.set('status', FILTER_STATUSES[f]);
+    if (campaign) q.set('campaign_id', campaign);
+    const { posts } = await api('/api/social/posts?' + q);
+    return html`
+      <div class="filters">
+        <div class="seg">${CONTENT_FILTERS.map(([k, l]) => html`<a href="#/social/content?f=${k}${campaign ? '&campaign=' + campaign : ''}" class="${k === f ? 'on' : ''}">${l}</a>`)}</div>
+        ${campaign ? html`<span class="tag">Campaign: ${posts[0]?.campaign_name || 'selected'} <a href="#/social/content?f=${f}" aria-label="Show all campaigns">✕</a></span>` : ''}
+      </div>
+      ${posts.length ? html`<div class="grid g3">${posts.map(postCard)}</div>` : html`<div class="card empty">Nothing here yet.</div>`}`;
+  }
+
+  const mediaUrl = (id) => `/api/social/media/${id}`;
+  const postCard = (p) => html`
+    <div class="card post-card" data-action="post-detail" data-id="${p.id}">
+      <div class="thumb">${p.cover_media_id
+        ? (p.cover_type.startsWith('image/') ? html`<img src="${mediaUrl(p.cover_media_id)}" alt="" loading="lazy">`
+          : html`<video src="${mediaUrl(p.cover_media_id)}#t=0.5" preload="metadata" muted playsinline></video><span class="play">▶</span>`)
+        : html`<span class="small">${p.external_link ? 'Files linked' : 'No media yet'}</span>`}
+        ${p.media_count > 1 ? html`<span class="count">+${p.media_count - 1}</span>` : ''}</div>
+      <div class="row-between"><b>${p.title}</b>${statusTag(p.status)}</div>
+      <div class="small" style="margin-top:4px">${platformChips(p.platforms)} · ${p.post_type || 'post'}</div>
+      <div class="small">${p.planned_at ? fmtWhen(p.planned_at) : 'No date yet'}${p.campaign_name ? ' · ' + p.campaign_name : ''}${p.comment_count ? ` · ${p.comment_count} comment${p.comment_count > 1 ? 's' : ''}` : ''}</div>
+    </div>`;
+
+  async function postDetail(id) {
+    const d = await api(`/api/social/posts/${id}`);
+    const p = d.post;
+    const btn = (s, label, cls = '') => html`<button type="button" class="btn sm ${cls}" data-action="post-status" data-status="${s}">${label}</button>`;
+    const acts = [];
+    if (d.canEdit) acts.push(html`<button type="button" class="btn sm" data-action="edit-post">Edit</button>`);
+    if (['draft', 'changes_requested'].includes(p.status)) {
+      acts.push(d.canApprove ? btn('approved', p.status === 'draft' ? 'Approve' : 'Approve as is', 'rev') : btn('in_review', 'Send to Twurt for review', 'primary'));
+    }
+    if (p.status === 'in_review') {
+      if (d.canApprove) acts.push(btn('approved', 'Approve', 'rev'), btn('changes_requested', 'Request changes', 'exp'));
+      else acts.push(btn('draft', 'Withdraw'));
+    }
+    if (p.status === 'approved') acts.push(btn('scheduled', 'Mark scheduled'));
+    if (['approved', 'scheduled'].includes(p.status)) {
+      acts.push(btn('posted', 'Mark posted', 'rev'));
+      if (d.canApprove) acts.push(btn('changes_requested', 'Request changes', 'exp'));
+    }
+    if (p.status === 'posted') acts.push(html`<button type="button" class="btn sm" data-action="post-results">Update results</button>`);
+
+    openModal({
+      title: p.title,
+      wide: true,
+      body: html`
+        <div class="small">${statusTag(p.status)} ${platformChips(p.platforms)} · ${p.post_type || 'post'}${p.planned_at ? ' · ' + fmtWhen(p.planned_at) : ' · no date yet'}${p.campaign_name ? ' · ' + p.campaign_name : ''} · by ${p.created_by_name || '—'}</div>
+        <div class="actions" style="margin:12px 0">${acts}</div>
+        ${d.media.length ? html`<div class="media-grid">${d.media.map((m) => html`<figure>
+          ${m.content_type.startsWith('image/') ? html`<a href="${mediaUrl(m.id)}" target="_blank" rel="noopener"><img src="${mediaUrl(m.id)}" alt="${m.filename}"></a>`
+            : html`<video src="${mediaUrl(m.id)}" controls preload="metadata" playsinline></video>`}
+          <figcaption>${m.filename} · ${fileSize(m.size)}${d.canEdit ? html` <button type="button" class="btn link sm" data-action="media-delete" data-id="${m.id}">Remove</button>` : ''}</figcaption></figure>`)}</div>` : ''}
+        ${d.canEdit ? (d.uploads
+          ? html`<div style="margin:8px 0"><label class="btn sm">+ Add photos / videos<input type="file" accept="image/*,video/*" multiple data-change="post-upload" hidden></label> <span class="small">Up to 95 MB each</span></div>`
+          : html`<div class="hint" style="margin:8px 0">File uploads aren't switched on yet. Use <b>Edit → Link to files</b> (Google Drive, Dropbox) for now.</div>`) : ''}
+        ${p.external_link ? html`<p><a href="${p.external_link}" target="_blank" rel="noopener noreferrer">Open linked files ↗</a></p>` : ''}
+        <h4>Caption</h4>
+        <div class="caption">${p.caption || '—'}</div>
+        ${p.hashtags ? html`<div class="small" style="margin-top:6px">${p.hashtags}</div>` : ''}
+        ${p.status === 'posted' ? html`<h4>Results</h4><div class="grid g4 results">
+          <div><div class="small">Views</div><b>${num(p.views)}</b></div><div><div class="small">Likes</div><b>${num(p.likes)}</b></div>
+          <div><div class="small">Comments</div><b>${num(p.comments)}</b></div><div><div class="small">Shares</div><b>${num(p.shares)}</b></div></div>
+          ${p.post_url ? html`<p><a href="${p.post_url}" target="_blank" rel="noopener noreferrer">View live post ↗</a></p>` : ''}` : ''}
+        <h4>Review & comments</h4>
+        <div class="thread">${d.comments.length ? d.comments.map((c) => c.kind === 'status'
+          ? html`<div class="evt"><b>${c.user_name || 'Someone'}</b> ${STATUS_VERB[c.status] || c.status} · <span class="small">${fmtStamp(c.created_at)}</span>${c.body ? html`<div class="note">${c.body}</div>` : ''}</div>`
+          : html`<div class="cmt"><div class="small"><b>${c.user_name || 'Someone'}</b> · ${fmtStamp(c.created_at)}</div><div class="body">${c.body}</div></div>`)
+          : html`<div class="small">No comments yet.</div>`}</div>
+        <div class="reply"><textarea id="commentInput" rows="2" placeholder="Ask a question or leave feedback…"></textarea>
+          <button type="button" class="btn sm" data-action="post-comment">Send</button></div>`,
+      onDelete: d.canApprove || p.status === 'draft' ? async () => {
+        if (!confirm('Delete this post and its files?')) return false;
+        await api(`/api/social/posts/${p.id}`, { method: 'DELETE' });
+        toast('Post deleted');
+      } : null,
+    });
+    state.post = d;
+  }
+
+  function uploadFiles(postId, files) {
+    return files.reduce((chain, file, i) => chain.then(() => new Promise((resolve, reject) => {
+      if (!/^(image|video)\//.test(file.type)) return reject(new Error(`${file.name} isn't a photo or video`));
+      if (file.size > 95 * 1024 * 1024) return reject(new Error(`${file.name} is over 95 MB. Paste a Drive or Dropbox link instead.`));
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/social/posts/${postId}/media`);
+      xhr.setRequestHeader('content-type', file.type);
+      xhr.setRequestHeader('x-filename', encodeURIComponent(file.name));
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) toast(`Uploading ${i + 1} of ${files.length}: ${Math.round((e.loaded / e.total) * 100)}%`); };
+      xhr.onload = () => {
+        if (xhr.status < 300) return resolve();
+        let msg = 'Upload failed';
+        try { msg = JSON.parse(xhr.responseText).error || msg; } catch { /* not JSON */ }
+        reject(new Error(msg));
+      };
+      xhr.onerror = () => reject(new Error('Upload failed. Check your connection and try again.'));
+      xhr.send(file);
+    })), Promise.resolve());
+  }
+
+  async function postForm(p = {}, preset = {}) {
+    const { campaigns } = await api('/api/social/campaigns');
+    const chosen = plist(p.platforms ?? 'instagram,tiktok');
+    openModal({
+      title: p.id ? 'Edit post' : 'New post',
+      body: html`<div class="form">
+        <label class="f full"><span>Working title</span><input name="title" value="${p.title || ''}" required placeholder="Rain teaser #1"></label>
+        <div class="full"><span class="flabel">Platforms</span><div class="checks">${Object.entries(PLATFORMS).map(([k, pf]) =>
+          html`<label class="check"><input type="checkbox" name="pf_${k}" ${chosen.includes(k) ? raw('checked') : ''}> ${pf.label}</label>`)}</div></div>
+        <label class="f"><span>Type</span><select name="post_type">${opts(POST_TYPES.map((t) => [t, t[0].toUpperCase() + t.slice(1)]), p.post_type || 'post')}</select></label>
+        <label class="f"><span>Planned for</span><input name="planned_at" type="datetime-local" value="${p.planned_at || preset.planned_at || ''}"></label>
+        <label class="f full"><span>Campaign</span><select name="campaign_id">${opts([['', '— None —'], ...campaigns.map((c) => [c.id, c.name])], p.campaign_id ?? preset.campaign_id)}</select></label>
+        <label class="f full"><span>Caption</span><textarea name="caption" rows="5">${p.caption || ''}</textarea></label>
+        <label class="f full"><span>Hashtags</span><input name="hashtags" value="${p.hashtags || ''}" placeholder="#twurtchamberlain #countrypunkblack"></label>
+        <label class="f full"><span>Link to files (optional)</span><input name="external_link" type="url" value="${p.external_link || ''}" placeholder="Google Drive or Dropbox link, e.g. for big videos"></label>
+        ${!p.id && state.features.uploads ? html`<label class="f full"><span>Photos / videos</span><input type="file" name="files" accept="image/*,video/*" multiple></label>` : ''}
+        ${!p.id ? html`<div class="hint full">Saves as a draft. When it's ready, open it and click <b>Send to Twurt for review</b>.</div>` : ''}
+      </div>`,
+      onSubmit: async (d) => {
+        d.platforms = Object.keys(PLATFORMS).filter((k) => d['pf_' + k]);
+        const files = [...($('#modal input[type=file][name=files]')?.files || [])];
+        delete d.files;
+        const res = await api(p.id ? `/api/social/posts/${p.id}` : '/api/social/posts', { method: p.id ? 'PUT' : 'POST', body: d });
+        const id = p.id || res.id;
+        if (files.length) await uploadFiles(id, files);
+        toast(p.id ? 'Post updated' : 'Draft saved');
+        return postDetail(id);
+      },
+    });
+  }
+
+  function resultsForm(p) {
+    openModal({
+      title: `Results · ${p.title}`,
+      body: html`<div class="form">
+        <label class="f full"><span>Link to the live post</span><input name="post_url" type="url" value="${p.post_url || ''}"></label>
+        <label class="f full"><span>Posted at</span><input name="posted_at" type="datetime-local" value="${p.posted_at || ''}"></label>
+        <label class="f"><span>Views</span><input name="views" type="number" min="0" step="1" value="${p.views ?? ''}"></label>
+        <label class="f"><span>Likes</span><input name="likes" type="number" min="0" step="1" value="${p.likes ?? ''}"></label>
+        <label class="f"><span>Comments</span><input name="comments" type="number" min="0" step="1" value="${p.comments ?? ''}"></label>
+        <label class="f"><span>Shares</span><input name="shares" type="number" min="0" step="1" value="${p.shares ?? ''}"></label>
+      </div>`,
+      onSubmit: async (d) => {
+        await api(`/api/social/posts/${p.id}/results`, { method: 'PUT', body: d });
+        toast('Results saved');
+        return postDetail(p.id);
+      },
+    });
+  }
+
+  async function socialCalendar() {
+    const m = /^\d{4}-\d{2}$/.test(hashParam('m') || '') ? hashParam('m') : todayStr().slice(0, 7);
+    const [y, mo] = m.split('-').map(Number);
+    const first = new Date(y, mo - 1, 1);
+    const last = new Date(y, mo, 0);
+    const { posts } = await api(`/api/social/posts?from=${iso(first)}&to=${iso(last)}`);
+    const byDay = {};
+    posts.filter((p) => p.planned_at).forEach((p) => { (byDay[p.planned_at.slice(0, 10)] ||= []).push(p); });
+    const prev = iso(new Date(y, mo - 2, 1)).slice(0, 7);
+    const next = iso(new Date(y, mo, 1)).slice(0, 7);
+    const cells = [];
+    for (let i = 0; i < first.getDay(); i++) cells.push(html`<div class="day pad"></div>`);
+    for (let d = 1; d <= last.getDate(); d++) {
+      const ds = `${m}-${pad(d)}`;
+      cells.push(html`<div class="day ${ds === todayStr() ? 'today' : ''}" data-action="new-post-on" data-date="${ds}" title="Plan a post on ${fmtDate(ds)}">
+        <div class="dnum">${d}</div>
+        ${(byDay[ds] || []).map((p) => html`<div class="chip" data-action="post-detail" data-id="${p.id}" title="${p.title} — ${POST_STATUS[p.status][0]}">
+          <i style="background:${PLATFORMS[plist(p.platforms)[0]]?.color || '#777'}"></i>${p.planned_at.length > 10 ? fmtTime(p.planned_at) + ' ' : ''}${p.title}</div>`)}</div>`);
+    }
+    const days = Object.keys(byDay).sort();
+    return html`<div class="card">
+      <div class="card-head"><a class="btn sm" href="#/social/calendar?m=${prev}" aria-label="Previous month">‹</a>
+        <h2>${first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2>
+        <a class="btn sm" href="#/social/calendar?m=${next}" aria-label="Next month">›</a></div>
+      <div class="cal">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((w) => html`<div class="dow">${w}</div>`)}${cells}</div>
+      <div class="agenda">${days.length ? days.map((ds) => html`<div class="eyebrow" style="margin-top:12px">${fmtDate(ds)}</div>
+        ${byDay[ds].map((p) => html`<div class="list-item clickable" data-action="post-detail" data-id="${p.id}"><div class="grow"><b>${p.title}</b>
+          <div class="small">${platformChips(p.platforms)}${p.planned_at.length > 10 ? ' · ' + fmtTime(p.planned_at) : ''}</div></div>${statusTag(p.status)}</div>`)}`)
+        : html`<div class="empty">Nothing planned this month</div>`}</div>
+      <div class="legend" style="margin-top:12px">${Object.entries(PLATFORMS).map(([, pf]) => html`<span><i style="background:${pf.color}"></i>${pf.label}</span>`)}
+        <span class="hide-sm">· Click a day to plan a post</span></div>
+    </div>`;
+  }
+
+  let campaignsCache = [];
+  async function socialCampaigns() {
+    campaignsCache = (await api('/api/social/campaigns')).campaigns;
+    if (!campaignsCache.length) return html`<div class="card empty">No campaigns yet. A campaign groups posts around one goal, like the "Rain" video release.</div>`;
+    return html`<div class="grid g2">${campaignsCache.map((c) => {
+      const [label, cls] = CAMPAIGN_STATUS[c.status] || [c.status, ''];
+      const dates = [c.start_date && fmtDate(c.start_date), c.end_date && fmtDate(c.end_date)].filter(Boolean).join(' – ');
+      return html`<div class="goal">
+        <div class="gh"><div><h3>${c.name}</h3><div class="meta">${dates || 'No dates set'}</div></div>
+          <div style="display:flex;gap:6px;align-items:center"><span class="tag ${cls}">${label}</span><button class="btn sm" data-action="edit-campaign" data-id="${c.id}">Edit</button></div></div>
+        <div style="margin-top:8px">${platformChips(c.platforms)}</div>
+        ${c.objective ? html`<p class="small" style="white-space:pre-wrap">${c.objective}</p>` : ''}
+        <div class="track" style="margin-top:10px"><div class="fill good" style="width:${c.post_count ? (c.posted_count / c.post_count) * 100 : 0}%"></div></div>
+        <div class="nums"><span>${c.posted_count} of ${c.post_count} posts live</span>${c.budget_cents != null ? html`<span>Budget ${money(c.budget_cents)}</span>` : ''}</div>
+        <div class="actions" style="margin-top:10px"><a class="btn sm" href="#/social/content?f=all&campaign=${c.id}">View posts</a>
+          <button class="btn sm" data-action="new-post" data-campaign="${c.id}">+ Add post</button></div>
+        ${c.notes ? html`<div class="small" style="margin-top:10px;white-space:pre-wrap">${c.notes}</div>` : ''}
+      </div>`;
+    })}</div>`;
+  }
+
+  function campaignForm(c = {}) {
+    const chosen = plist(c.platforms ?? 'instagram,tiktok');
+    openModal({
+      title: c.id ? 'Edit campaign' : 'New campaign',
+      body: html`<div class="form">
+        <label class="f full"><span>Campaign</span><input name="name" value="${c.name || ''}" required placeholder="Rain video release"></label>
+        <label class="f full"><span>Objective</span><textarea name="objective" rows="2" placeholder="What does success look like? e.g. 1,000 new TikTok followers, 50k views">${c.objective || ''}</textarea></label>
+        <div class="full"><span class="flabel">Platforms</span><div class="checks">${Object.entries(PLATFORMS).map(([k, pf]) =>
+          html`<label class="check"><input type="checkbox" name="pf_${k}" ${chosen.includes(k) ? raw('checked') : ''}> ${pf.label}</label>`)}</div></div>
+        <label class="f"><span>Start</span><input name="start_date" type="date" value="${c.start_date || ''}"></label>
+        <label class="f"><span>End</span><input name="end_date" type="date" value="${c.end_date || ''}"></label>
+        <label class="f"><span>Status</span><select name="status">${opts(Object.entries(CAMPAIGN_STATUS).map(([k, v]) => [k, v[0]]), c.status || 'planning')}</select></label>
+        <label class="f"><span>Ad budget ($, optional)</span><input name="budget" type="number" min="0" step="0.01" value="${dollars(c.budget_cents)}"></label>
+        <label class="f full"><span>Notes</span><textarea name="notes" placeholder="Content ideas, collaborators, key dates…">${c.notes || ''}</textarea></label>
+      </div>`,
+      onSubmit: async (d) => {
+        d.platforms = Object.keys(PLATFORMS).filter((k) => d['pf_' + k]);
+        await api(c.id ? `/api/social/campaigns/${c.id}` : '/api/social/campaigns', { method: c.id ? 'PUT' : 'POST', body: d });
+        toast(c.id ? 'Campaign updated' : 'Campaign added');
+      },
+      onDelete: c.id ? async () => {
+        if (!confirm('Delete this campaign? Its posts are kept.')) return false;
+        await api(`/api/social/campaigns/${c.id}`, { method: 'DELETE' });
+        toast('Campaign deleted');
+      } : null,
+    });
+  }
+
+  let metricsCache = { metrics: [] };
+  async function socialMetrics() {
+    metricsCache = await api('/api/social/metrics');
+    chartSeries = null;
+    const rows = metricsCache.metrics;
+    const series = {};
+    for (const p of Object.keys(PLATFORMS)) {
+      const s = rows.filter((r) => r.platform === p && r.followers != null).sort((a, b) => (a.date < b.date ? -1 : 1));
+      if (s.length) series[p] = s;
+    }
+    chartSeries = series;
+    const tiles = Object.entries(series).map(([p, s]) => {
+      const latest = s[s.length - 1];
+      const cutoff = iso(new Date(new Date(latest.date + 'T00:00').getTime() - 30 * 864e5));
+      const prior = [...s].reverse().find((r) => r.date <= cutoff);
+      const diff = prior ? latest.followers - prior.followers : null;
+      const total = latest.followers - s[0].followers;
+      return html`<div class="card metric"><div class="label">${platformChips(p)}</div><div class="value">${num(latest.followers)}</div>
+        <div class="small">${diff != null ? html`<span class="${diff < 0 ? 'neg' : 'pos'}">${diff < 0 ? '▼ ' : '▲ +'}${num(diff)}</span> last 30 days · ` : ''}${s.length > 1 ? `${total >= 0 ? '+' : ''}${num(total)} since ${shortDate(s[0].date)}` : 'First entry'}</div></div>`;
+    });
+    const rate = (r) => (r.views && r.engagement != null ? ((r.engagement / r.views) * 100).toFixed(1) + '%' : '—');
+    return html`
+      <div class="hint">Every week, open each app's <b>Insights / Analytics</b> and log followers, views and engagement (likes + comments + shares + saves) for the last 7 days. Saving the same date and platform again replaces that entry.</div>
+      ${tiles.length ? html`<div class="grid g4 section">${tiles}</div>` : ''}
+      <div class="card section"><div class="card-head"><h2>Followers over time</h2>
+        <div class="legend">${Object.keys(series).map((p) => html`<span><i style="background:${PLATFORMS[p].color}"></i>${PLATFORMS[p].label}</span>`)}</div></div>
+        <div id="chartSlot"></div></div>
+      <div class="card section"><h2>All entries</h2>${rows.length ? html`<div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Platform</th><th class="num">Followers</th><th class="num">Views</th><th class="num hide-sm">Engagement</th><th class="num">Eng. rate</th><th class="num hide-sm">Posts</th><th class="hide-sm">Notes</th><th></th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr class="clickable" data-action="edit-metric" data-id="${r.id}">
+          <td style="white-space:nowrap">${fmtDate(r.date)}</td><td>${platformChips(r.platform)}</td>
+          <td class="num">${num(r.followers)}</td><td class="num">${num(r.views)}</td><td class="num hide-sm">${num(r.engagement)}</td>
+          <td class="num">${rate(r)}</td><td class="num hide-sm">${num(r.posts)}</td><td class="small hide-sm">${r.notes || ''}</td>
+          <td class="num"><button class="btn link sm" data-action="metric-delete" data-id="${r.id}" aria-label="Delete entry">✕</button></td></tr>`)}</tbody></table></div>`
+        : html`<div class="empty">No numbers logged yet.</div>`}</div>
+      <div class="card section"><h2>Top posts</h2>${metricsCache.topPosts.length ? html`<div class="table-wrap"><table>
+        <thead><tr><th>Post</th><th class="num">Views</th><th class="num">Likes</th><th class="num hide-sm">Comments</th><th class="num hide-sm">Shares</th></tr></thead>
+        <tbody>${metricsCache.topPosts.map((p) => html`<tr class="clickable" data-action="post-detail" data-id="${p.id}">
+          <td><b>${p.title}</b><div class="small">${platformChips(p.platforms)}${p.posted_at ? ' · ' + fmtWhen(p.posted_at) : ''}</div></td>
+          <td class="num">${num(p.views)}</td><td class="num">${num(p.likes)}</td><td class="num hide-sm">${num(p.comments)}</td><td class="num hide-sm">${num(p.shares)}</td></tr>`)}</tbody></table></div>`
+        : html`<div class="empty">Once posts go live, use <b>Update results</b> on each one to see what's working.</div>`}</div>`;
+  }
+
+  // Line chart of followers per platform. One y-axis, 2px lines, 8px markers with a surface ring,
+  // direct end labels, and a crosshair tooltip (attachChartHover). The entries table is the table view.
+  let chartSeries = null;
+  function niceStep(range) {
+    const raw = range / 4;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    return [1, 2, 2.5, 5, 10].map((m) => m * mag).find((st) => st >= raw);
+  }
+  function drawChart() {
+    const slot = $('#chartSlot');
+    if (!slot || !chartSeries) return;
+    slot.innerHTML = followersChart(chartSeries, slot.clientWidth).s;
+    attachChartHover();
+  }
+  let resizeTimer;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawChart, 150); });
+
+  // Drawn at the container's real pixel width so text stays 11-12px on any screen.
+  function followersChart(series, width) {
+    const entries = Object.entries(series);
+    if (!entries.length) return html`<div class="empty">Log numbers on two or more dates to see growth.</div>`;
+    const W = Math.max(280, Math.round(width || 680));
+    const H = W < 500 ? 220 : 260, L = 44, R = W < 500 ? 84 : 118, T = 12, B = 28;
+    const t = (d) => new Date(d + 'T00:00').getTime();
+    const all = entries.flatMap(([, s]) => s);
+    let x0 = Math.min(...all.map((r) => t(r.date)));
+    let x1 = Math.max(...all.map((r) => t(r.date)));
+    if (x0 === x1) { x0 -= 3 * 864e5; x1 += 3 * 864e5; }
+    const lo = Math.min(...all.map((r) => r.followers));
+    const hi = Math.max(...all.map((r) => r.followers));
+    const step = niceStep(Math.max(hi - lo, 4));
+    let y0 = Math.max(0, Math.floor(lo / step) * step);
+    let y1 = Math.ceil(hi / step) * step;
+    if (y1 === y0) y1 = y0 + step;
+    const X = (d) => L + ((t(d) - x0) / (x1 - x0)) * (W - L - R);
+    const Y = (n) => T + (1 - (n - y0) / (y1 - y0)) * (H - T - B);
+    const ticks = [];
+    for (let v = y0; v <= y1 + 1e-9; v += step) ticks.push(v);
+    const dates = [...new Set(all.map((r) => r.date))].sort();
+    const xLabels = dates.length > 2 ? [dates[0], dates[Math.floor(dates.length / 2)], dates[dates.length - 1]] : dates;
+    // End labels, nudged apart so they never overlap.
+    const ends = entries.map(([p, s]) => ({ p, y: Y(s[s.length - 1].followers), x: X(s[s.length - 1].date), v: s[s.length - 1].followers }))
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 15) ends[i].y = ends[i - 1].y + 15;
+    const data = { L, R, W, T, B, H, dates: dates.map((d) => ({ d, x: X(d) })), series: entries.map(([p, s]) => ({ p, pts: s.map((r) => ({ d: r.date, v: r.followers, y: Y(r.followers) })) })) };
+    return html`<div class="chart" data-chart="${JSON.stringify(data)}">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Followers over time by platform">
+        ${ticks.map((v) => html`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" class="grid-line"></line><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end" class="axis">${compact.format(v)}</text>`)}
+        ${xLabels.map((d) => html`<text x="${X(d)}" y="${H - 8}" text-anchor="middle" class="axis">${shortDate(d)}</text>`)}
+        ${entries.map(([p, s]) => html`<polyline fill="none" stroke="${PLATFORMS[p].color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${s.map((r) => `${X(r.date)},${Y(r.followers)}`).join(' ')}"></polyline>
+          ${s.map((r) => html`<circle cx="${X(r.date)}" cy="${Y(r.followers)}" r="4" fill="${PLATFORMS[p].color}" class="dot"></circle>`)}`)}
+        ${ends.map((e) => html`<text x="${e.x + 10}" y="${e.y + 4}" class="end-label">${W < 500 ? '' : PLATFORMS[e.p].label + ' '}${compact.format(e.v)}</text>`)}
+        <line class="xhair" y1="${T}" y2="${H - B}" x1="0" x2="0" hidden></line>
+        <rect class="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"></rect>
+      </svg>
+      <div class="tip" hidden></div>
+    </div>`;
+  }
+
+  function attachChartHover() {
+    const box = $('.chart');
+    if (!box) return;
+    const data = JSON.parse(box.dataset.chart);
+    const svg = $('svg', box);
+    const line = $('.xhair', box);
+    const tip = $('.tip', box);
+    const hide = () => { line.hidden = true; tip.hidden = true; };
+    const show = (e) => {
+      const rect = svg.getBoundingClientRect();
+      const vx = ((e.clientX - rect.left) / rect.width) * data.W;
+      const near = data.dates.reduce((a, b) => (Math.abs(b.x - vx) < Math.abs(a.x - vx) ? b : a));
+      line.setAttribute('x1', near.x);
+      line.setAttribute('x2', near.x);
+      line.hidden = false;
+      tip.innerHTML = html`<b>${fmtDate(near.d)}</b>${data.series.map((s) => {
+        const pt = s.pts.find((q) => q.d === near.d);
+        return html`<div><i style="background:${PLATFORMS[s.p].color}"></i>${PLATFORMS[s.p].label}: ${pt ? num(pt.v) : '—'}</div>`;
+      })}`.s;
+      tip.hidden = false;
+      const px = (near.x / data.W) * rect.width;
+      tip.style.left = Math.min(Math.max(px + 12, 0), rect.width - tip.offsetWidth) + 'px';
+      tip.style.top = '8px';
+    };
+    svg.addEventListener('pointermove', show);
+    svg.addEventListener('pointerdown', show);
+    svg.addEventListener('pointerleave', hide);
+  }
+
+  function metricForm(m = {}) {
+    openModal({
+      title: m.id ? 'Edit numbers' : 'Log numbers',
+      body: html`<div class="form">
+        <label class="f"><span>Platform</span><select name="platform">${opts(Object.entries(PLATFORMS).map(([k, pf]) => [k, pf.label]), m.platform || 'instagram')}</select></label>
+        <label class="f"><span>Date</span><input name="date" type="date" value="${m.date || todayStr()}" required></label>
+        <label class="f"><span>Followers (total)</span><input name="followers" type="number" min="0" step="1" value="${m.followers ?? ''}"></label>
+        <label class="f"><span>Views (last 7 days)</span><input name="views" type="number" min="0" step="1" value="${m.views ?? ''}"></label>
+        <label class="f"><span>Engagement (last 7 days)</span><input name="engagement" type="number" min="0" step="1" value="${m.engagement ?? ''}" placeholder="likes + comments + shares + saves"></label>
+        <label class="f"><span>Posts (last 7 days)</span><input name="posts" type="number" min="0" step="1" value="${m.posts ?? ''}"></label>
+        <label class="f full"><span>Notes</span><input name="notes" value="${m.notes || ''}" placeholder="e.g. Rain teaser went viral"></label>
+      </div>`,
+      onSubmit: async (d) => {
+        await api('/api/social/metrics', { method: 'POST', body: d });
+        toast('Numbers saved');
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------- messages
+  const msgState = { convId: null, lastId: 0, lastDay: null, busy: false, tick: 0 };
+
+  const convListHtml = (convs, activeId) => convs.map((c) => html`<a class="conv ${c.id === activeId ? 'on' : ''}" href="#/messages/${c.id}">
+    <span class="grow"><b>${c.kind === 'channel' ? '# ' + c.name : c.name}</b><span class="small">${c.last_body ? c.last_body.slice(0, 60) : c.kind === 'channel' ? 'Whole team' : 'No messages yet'}</span></span>
+    ${c.unread && c.id !== activeId ? html`<span class="nav-count">${c.unread}</span>` : ''}</a>`);
+
+  async function pageMessages(el) {
+    const [{ conversations }, { people }] = await Promise.all([api('/api/conversations'), api('/api/team')]);
+    let convId = Number(subPage()) || null;
+    if (!convId && window.innerWidth > 760) convId = conversations[0]?.id || null;
+    const conv = conversations.find((c) => c.id === convId);
+    Object.assign(msgState, { convId: conv ? conv.id : null, lastId: 0, lastDay: null });
+    const hasDm = new Set(conversations.filter((c) => c.kind === 'dm').map((c) => c.other_user_id));
+    const newPeople = people.filter((p) => !hasDm.has(p.id));
+    el.innerHTML = html`
+      <div class="top"><div><div class="eyebrow">Messages</div><div class="title">Team chat.</div></div></div>
+      <div class="msgs ${conv ? 'has-conv' : ''}">
+        <div class="card conv-list">
+          <div id="convList">${convListHtml(conversations, msgState.convId)}</div>
+          ${newPeople.length ? html`<div class="eyebrow" style="margin:16px 0 6px">Start a private chat</div>
+            ${newPeople.map((p) => html`<button class="conv" data-action="open-dm" data-id="${p.id}"><span class="grow"><b>${p.name}</b><span class="small">${state.roles[p.role]?.label || p.role}</span></span></button>`)}` : ''}
+        </div>
+        <div class="card thread-card">${conv ? html`
+          <div class="thread-head"><a href="#/messages" class="btn link sm back">‹ All chats</a>
+            <h2>${conv.kind === 'channel' ? '# ' + conv.name : conv.name}</h2>
+            <div class="small">${conv.kind === 'channel' ? 'Everyone on the team can see this' : 'Private: only the two of you can see this'}</div></div>
+          <div class="msg-scroll" id="msgScroll"></div>
+          <div class="composer"><textarea id="msgInput" rows="2" placeholder="Message ${conv.kind === 'channel' ? 'the team' : conv.name}…"></textarea>
+            <button class="btn primary" data-action="send-msg">Send</button></div>
+          <div class="small composer-hint hide-sm">Enter to send · Shift+Enter for a new line</div>`
+          : html`<div class="empty">Pick a conversation</div>`}</div>
+      </div>`.s;
+    if (conv) {
+      await pollMessages();
+      $('#msgInput')?.focus();
+    }
+    updateBadges();
+  }
+
+  function msgHtml(m) {
+    const day = fmtDate(iso(new Date(m.created_at.replace(' ', 'T') + 'Z')));
+    const mine = m.user_id === state.user.id;
+    const sep = day !== msgState.lastDay ? html`<div class="day-sep"><span>${day}</span></div>` : '';
+    msgState.lastDay = day;
+    return html`${sep}<div class="bubble ${mine ? 'me' : ''}"><div class="who">${mine ? 'You' : m.user_name || 'Former teammate'} · ${fmtStamp(m.created_at).split(', ').pop()}</div><div class="text">${m.body}</div></div>`.s;
+  }
+
+  async function pollMessages() {
+    const id = msgState.convId;
+    if (!id || msgState.busy) return;
+    msgState.busy = true;
+    try {
+      const { messages } = await api(`/api/conversations/${id}/messages?after=${msgState.lastId}`);
+      const box = $('#msgScroll');
+      if (id !== msgState.convId || !box) return;
+      if (!messages.length) {
+        if (!msgState.lastId && !box.children.length) box.innerHTML = html`<div class="empty">No messages yet. Say hi!</div>`.s;
+        return;
+      }
+      if (!msgState.lastId) box.innerHTML = '';
+      const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80 || !msgState.lastId;
+      box.insertAdjacentHTML('beforeend', messages.map(msgHtml).join(''));
+      msgState.lastId = messages[messages.length - 1].id;
+      if (nearBottom) box.scrollTop = box.scrollHeight;
+    } finally {
+      msgState.busy = false;
+    }
+  }
+
+  async function refreshConvList() {
+    const list = $('#convList');
+    if (!list) return;
+    const { conversations } = await api('/api/conversations');
+    list.innerHTML = convListHtml(conversations, msgState.convId).map(part).join('');
+  }
+
+  async function updateBadges() {
+    if (!state.user) return;
+    try {
+      const u = await api('/api/conversations/unread');
+      for (const [key, n] of [['messages', u.messages], ['social', u.review]]) {
+        $$(`[data-badge="${key}"]`).forEach((b) => { b.textContent = n; b.hidden = !n; });
+      }
+    } catch { /* tables not created yet, or offline */ }
+  }
+
+  // Live updates: new messages every 5s while chatting, badges every 30s.
+  setInterval(() => {
+    if (!state.user || document.hidden) return;
+    msgState.tick++;
+    if (currentPage() === 'messages') {
+      pollMessages().catch(() => {});
+      if (msgState.tick % 3 === 0) refreshConvList().catch(() => {});
+    }
+    if (msgState.tick % 6 === 0) updateBadges();
+  }, 5000);
+
   // ---------------------------------------------------------------- settings
   async function pageSettings(el) {
     const u = state.user;
@@ -757,7 +1332,7 @@
           ${team.users.map((p) => html`<div class="list-item ${p.active ? '' : 'dim'}" style="${p.active ? '' : 'opacity:.5'}">
             <div class="grow"><b>${p.name}</b><div class="small">${p.email} · ${team.roles[p.role]?.label || p.role}${p.active ? '' : ' · disabled'}</div></div>
             <button class="btn sm" data-action="edit-user" data-id="${p.id}">Edit</button></div>`)}
-          <div class="hint" style="margin-top:12px">Owners see everything. When your publicist and social manager join, they'll get their own roles that only show the pages they need.</div>
+          <div class="hint" style="margin-top:12px">Owners see everything. A <b>Social media manager</b> only sees Social and Messages. Direct messages are private to the two people in them.</div>
         </div>` : ''}
       </div>`.s;
     state.team = team?.users || [];
@@ -830,6 +1405,72 @@
       try { await api(`/api/milestones/${d.id}`, { method: 'DELETE' }); refresh(); } catch (err) { toast(err.message, true); }
     },
     'new-user': () => userForm(),
+    'new-post': (d) => postForm({}, { campaign_id: d.campaign }),
+    'new-post-on': (d) => postForm({}, { planned_at: d.date + 'T12:00' }),
+    'post-detail': (d) => postDetail(d.id),
+    'edit-post': () => postForm(state.post.post),
+    'post-results': () => resultsForm(state.post.post),
+    'post-status': async (d) => {
+      const p = state.post.post;
+      const body = { status: d.status };
+      if (d.status === 'changes_requested') {
+        body.note = prompt('What should change?');
+        if (!body.note) return;
+      } else if (d.status === 'posted') {
+        const link = prompt('Link to the live post (optional):', p.post_url || '');
+        if (link === null) return;
+        body.post_url = link;
+      } else if (d.status === 'approved') {
+        const note = prompt('Approve this post. Add a note (optional):', '');
+        if (note === null) return;
+        body.note = note;
+      }
+      await api(`/api/social/posts/${p.id}/status`, { method: 'POST', body });
+      toast({ in_review: 'Sent for review', approved: 'Approved', changes_requested: 'Changes requested', scheduled: 'Marked scheduled', posted: 'Marked posted', draft: 'Withdrawn' }[d.status]);
+      await postDetail(p.id);
+      refresh();
+      updateBadges();
+    },
+    'post-comment': async () => {
+      const input = $('#commentInput');
+      if (!input.value.trim()) return;
+      await api(`/api/social/posts/${state.post.post.id}/comments`, { method: 'POST', body: { body: input.value } });
+      await postDetail(state.post.post.id);
+      $('.thread')?.lastElementChild?.scrollIntoView({ block: 'nearest' });
+    },
+    'media-delete': async (d) => {
+      if (!confirm('Remove this file?')) return;
+      await api(`/api/social/media/${d.id}`, { method: 'DELETE' });
+      await postDetail(state.post.post.id);
+      refresh();
+    },
+    'new-campaign': () => campaignForm(),
+    'edit-campaign': (d) => campaignForm(campaignsCache.find((c) => String(c.id) === d.id)),
+    'log-metric': () => metricForm(),
+    'edit-metric': (d) => metricForm(metricsCache.metrics.find((m) => String(m.id) === d.id)),
+    'metric-delete': async (d) => {
+      if (!confirm('Delete this entry?')) return;
+      await api(`/api/social/metrics/${d.id}`, { method: 'DELETE' });
+      refresh();
+    },
+    'open-dm': async (d) => {
+      const { id } = await api('/api/conversations/dm', { method: 'POST', body: { user_id: Number(d.id) } });
+      location.hash = '#/messages/' + id;
+    },
+    'send-msg': async () => {
+      const input = $('#msgInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      try {
+        await api(`/api/conversations/${msgState.convId}/messages`, { method: 'POST', body: { body: text } });
+      } catch (err) {
+        input.value = text;
+        throw err;
+      }
+      await pollMessages();
+      refreshConvList().catch(() => {});
+    },
     'edit-user': (d) => userForm(state.team.find((p) => String(p.id) === d.id)),
   };
 
@@ -845,6 +1486,16 @@
     },
     'adjust-reason': () => syncAdjust(),
     'goal-metric': () => syncGoalMetric(),
+    'post-upload': async (el) => {
+      const files = [...el.files];
+      if (!files.length) return;
+      try {
+        await uploadFiles(state.post.post.id, files);
+        toast('Uploaded');
+      } catch (err) { toast(err.message, true); }
+      await postDetail(state.post.post.id);
+      refresh();
+    },
     'milestone-toggle': async (el) => {
       try { await api(`/api/milestones/${el.dataset.id}`, { method: 'PUT', body: { done: el.checked } }); refresh(); } catch (err) { toast(err.message, true); }
     },
@@ -919,6 +1570,12 @@
     fn(formData(form), form);
   });
   $('#modal').addEventListener('close', () => { modalSubmit = null; });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.id === 'msgInput' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      actions['send-msg']().catch((err) => toast(err.message, true));
+    }
+  });
   window.addEventListener('hashchange', () => { closeModal(); render(); });
 
   // ---------------------------------------------------------------- boot
@@ -927,6 +1584,7 @@
       state.user = s.user;
       state.needsSetup = s.needsSetup;
       state.roles = s.roles;
+      state.features = s.features || {};
       render();
     })
     .catch((err) => {
